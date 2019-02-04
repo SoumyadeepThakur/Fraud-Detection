@@ -8,8 +8,9 @@ import signal
 import sys
 import tensorflow as tf
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
+from confusion import evaluate
 
 '''
 TO DO: DROP TIME ATTRIBUTE AND TRY
@@ -20,7 +21,11 @@ def make_data():
 	df = pd.read_csv('creditcard.csv')
 	data = df
 	data['Time'] = data['Time'].apply(lambda x : ((x//60)%1440)/1440) # convert to time of day in minuites
-	data['Amount'] = StandardScaler().fit_transform(data['Amount'].values.reshape(-1, 1))
+	#data['Amount'] = StandardScaler().fit_transform(data['Amount'].values.reshape(-1, 1))
+	cols = data.columns.values
+	for col in cols[1:len(cols)]:
+		data[col] = MinMaxScaler().fit_transform(data[col].values.reshape(-1, 1))	
+	data['Class'] = data['Class'].apply(lambda x : int(x//1))
 	# Prepare for train
 	X_train, X_test = train_test_split(data, test_size=0.2, random_state=RANDOM_SEED)
 	X_train = X_train[X_train.Class == 0]
@@ -46,7 +51,7 @@ def create_model(X_test, X_train, Y_test,  lrate = 1e-5):
 	dim_b = 32
 	dim_input = X_train.shape[1]
 	dim_enc_1 = 14
-	dim_enc_2 = 7
+	dim_hidden = 7
 	dim_dec_1 = 14
 	dim_dec_2 = dim_input
 
@@ -64,36 +69,40 @@ def create_model(X_test, X_train, Y_test,  lrate = 1e-5):
 	# SECOND ENCODING LAYER
 
 	with tf.name_scope('encoding-layer-2'):
-		model['We_2'] = tf.Variable(tf.random_normal([dim_enc_1, dim_enc_2], stddev=1.0/dim_enc_2), name = 'We-2')
-		model['Be_2'] = tf.Variable(tf.random_normal([1, dim_enc_2], stddev=1.0/dim_enc_2), name = 'Be-2')
-		model['ye_2'] = tf.nn.relu(tf.add(tf.matmul(model['ye_1'], model['We_2']), model['Be_2']), name = 'ye-2')
+		model['We_2'] = tf.Variable(tf.random_normal([dim_enc_1, dim_hidden], stddev=1.0/dim_hidden), name = 'We-2')
+		model['Be_2'] = tf.Variable(tf.random_normal([1, dim_hidden], stddev=1.0/dim_hidden), name = 'Be-2')
+		model['ye_2'] = tf.nn.sigmoid(tf.add(tf.matmul(model['ye_1'], model['We_2']), model['Be_2']), name = 'ye-2')
 
+	
 	# FIRST DECODING LAYER
 
 	with tf.name_scope('decoding-layer-1'):
-		model['Wd_1'] = tf.Variable(tf.random_normal([dim_enc_2, dim_dec_1], stddev=1.0/dim_dec_1), name = 'Wd-1')
+		model['Wd_1'] = tf.Variable(tf.random_normal([dim_hidden, dim_dec_1], stddev=1.0/dim_dec_1), name = 'Wd-1')
 		model['Bd_1'] = tf.Variable(tf.random_normal([1, dim_dec_1], stddev=1.0/dim_dec_1), name = 'Bd-1')
 		model['yd_1'] = tf.nn.tanh(tf.add(tf.matmul(model['ye_2'], model['Wd_1']), model['Bd_1']), name = 'yd-1')
-	
+
 	# SECOND DECODING LAYER
 
 	with tf.name_scope('decoding-layer-2'):
 		model['Wd_2'] = tf.Variable(tf.random_normal([dim_dec_1, dim_dec_2], stddev=1.0/dim_dec_2), name = 'Wd-2')
 		model['Bd_2'] = tf.Variable(tf.random_normal([1, dim_dec_2], stddev=1.0/dim_dec_2), name = 'Bd-2')
 
-	with tf.name_scope('output'):
-		model['op'] = tf.nn.relu(tf.add(tf.matmul(model['yd_1'], model['Wd_2']), model['Bd_2']), name = 'output-vector')
-		#model['op'] = tf.Print(model['op'], [model['op']], message="This is op: ")
+	
 
-	with tf.name_scope('loss_optim_2'):
+	with tf.name_scope('output'):
+		model['op'] = tf.nn.sigmoid(tf.add(tf.matmul(model['yd_1'], model['Wd_2']), model['Bd_2']), name = 'output-vector')
+		#model['op'] = tf.Print(model['op'], [model['op']], message="This is op: ", summarize=960)
+
+
+	with tf.name_scope('loss_optim_4'):
 
 		#model['cost'] = tf.reduce_mean(tf.pow(model['ip'] - model['op'], 2), name='cost')
 		model['cost'] = tf.reduce_mean(tf.squared_difference(model['ip'], model['op']), name = 'cost')
-
+		model['cost-2'] = tf.reduce_mean(tf.squared_difference(model['ip'], model['op']), axis=1, name='cost-2')
 
 		model['optimizer'] = tf.train.AdamOptimizer(lrate).minimize(model['cost'], name = 'optim')
 		model['sum_loss'] = tf.summary.scalar(model['cost'].name, model['cost'])
-		model['print-cost'] = tf.Print(model['cost'], [model['cost']], message="This is cost: ")
+		model['print-cost'] = tf.Print(model['cost-2'], [model['cost-2']], message="This is cost: ", summarize = 32)
 
 	# return the model dictionary
 
@@ -115,8 +124,8 @@ def train_model(model, X_train, epoch = 100):
 		init = tf.global_variables_initializer()
 		session.run(init)
 
-		path_model = './model-2'
-		path_logdir = 'logs-auto-2'
+		path_model = './model-3'
+		path_logdir = 'logs-auto-3'
 
 		saver = tf.train.Saver()
 		writer = tf.summary.FileWriter(path_logdir, session.graph)
@@ -171,31 +180,44 @@ def train_model(model, X_train, epoch = 100):
 
 def test_model(model, X_test, Y_test):
 
-	path_model = './model-2'
+	path_model = './model-3'
 	#path_logdir = 'logs-auto-2'
 
-	with tf.Session() as sess:
+	with open('logfile-3.txt','w+') as outfile:
+		with tf.Session() as sess:
 
-		saver = tf.train.Saver()
-		saver.restore(sess, path_model)
+			saver = tf.train.Saver()
+			saver.restore(sess, path_model)
 
-		for i in range(0,X_test.shape[0],32):
+			for i in range(0,X_test.shape[0]-2,32):
 
-			in_vector = X_test[i:i+32]
-			feed = {model['ip']: in_vector}
+				in_vector = X_test[i:i+32]
+				feed = {model['ip']: in_vector}
 
-			sess.run(model['print-cost'], feed_dict =  feed)
-			print('---',1 in Y_test[i:i+32])
+				outfile.write('Batch --- ' + str(i//32) +' --- \n')
+				ans = sess.run(model['cost-2'], feed_dict =  feed)
+				#print(list(ans))
+				outfile.write(str(list(ans)))
+				outfile.write('\n')
 
 
 
+def consfusion_eval(labels, file):
+
+	#sprint(labels)
+	#sprint(labels)
+	TPX, TNX, FPX, FNX = list(), list(), list(), list()
+	for i in range(0,100):
+		tp, tn, fp, fn = evaluate(labels, file, (i/100))
+		print('Thresh: ', i/100, 'Conf: ', tp, ' -- ', tn, ' -- ', fp, ' -- ', fn)
 
 def main():
 	
 	X_test, X_train, Y_test = make_data()
 
 	model = create_model(X_test, X_train, Y_test)
-	train_model(model, X_train)
+	#train_model(model, X_train, epoch = 50)
 	#test_model(model, X_test, Y_test)
-    
+	consfusion_eval(Y_test, 'logfile-3.txt')
+
 main()

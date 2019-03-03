@@ -30,13 +30,6 @@ def make_data():
 
 	return X,Y
 '''
-def order(vec1, vec2):
-	assert len(vec1) == len(vec2)
-	e=1
-	for i in range(len(vec1)):
-		e = e and (vec1[i]==vec2[i])
-'''
-'''
 def dbscan_predict(dbscan_model, X_new, metric=sp.spatial.distance.euclidean):
     # Result is noise by default
     y_new = np.ones(shape=len(X_new), dtype=int)*-1 
@@ -57,8 +50,7 @@ def dbscan_predict(dbscan_model, X_new, metric=sp.spatial.distance.euclidean):
 def dbscan_predict(X_pred, kdtree, pred):
 
 	Y_pred = list()
-	#indices = kdtree.query_radius(X_pred, r=0.23)
-	indices = kdtree.query_radius(X_pred, r=0.2)
+	indices = kdtree.query_radius(X_pred, r=0.23)
 	for arr in indices:
 		if len(arr) == 0: Y_pred.append(-1)
 		else:
@@ -67,7 +59,35 @@ def dbscan_predict(X_pred, kdtree, pred):
 			label = clus_ctr.most_common(1)[0][0]
 			#print ('Cluster: ', clus)
 			#print('Label: ',label)
+			#if len(clus)<1000:
+			#	print(len(clus), ' --- ', clus_ctr)
+
+			#if len(clus)>1000 and label==0:
+			#	Y_pred.append(0)
+			#else:
+			#	Y_pred.append(1)
 			Y_pred.append(label)
+
+	return Y_pred
+
+def dbscan_predict2(X_pred, kdtree, pred):
+
+	Y_pred = list()
+	indices = kdtree.query_radius(X_pred, r=0.23)
+	for arr in indices:
+		if len(arr) == 0: Y_pred.append(-1)
+		else:
+			clus = [pred[i] for i in arr]
+			clus_ctr = Counter(clus)
+			label = clus_ctr.most_common(1)[0][0]
+			label_ctr = clus_ctr.most_common(1)[0][1]/len(clus)
+			#print(len(clus))
+			#print ('Cluster: ', clus)
+			#print('Label: ',label)
+			if label_ctr >= 0.9 and label == 0:
+				Y_pred.append(0)
+			else:
+				Y_pred.append(1)
 
 	return Y_pred
 
@@ -77,25 +97,17 @@ def main():
 
 	verbose=1
 	X, Y = make_data()
-	T=X[0:32768]
-	T2=X[40000:45000]
-	print('Preparing KD tree')
-	kdtree = KDTree(T)
-	print('Computing radius neighbour graph ...')
-	neighbors_model = NearestNeighbors(radius=0.2, n_neighbors=3, n_jobs=4)
-	neighbors_model.fit(kdtree)
-	rn_graph = neighbors_model.radius_neighbors_graph(T, 0.2, mode='distance')
-	print('Radius neighbour graph computed')
+	T=X[0:16384]
+	T2=X[16384:32768]
 	
 	print('Applying DBSCAN ...')
 	#print(T)
-	T=X[0:32768]
-	dbscan = DBSCAN(eps=0.2, min_samples=2, metric='precomputed', algorithm="ball_tree", n_jobs=4)
-	pred = np.array(dbscan.fit_predict(rn_graph))
+	T=X[0:16384]
+	dbscan = DBSCAN(eps=0.23, min_samples=3, n_jobs=4)
+	pred = np.array(dbscan.fit_predict(T))
 	print('DBSCAN done')
 	arr = np.insert(T,len(T[0]), pred, axis=1)
-	
-	np.savetxt("dbscan2.txt", arr, fmt="%f")
+	np.savetxt("dbscan-pred.txt", arr, fmt="%f")
 	#TT=np.loadtxt("dbscan2.txt")
 	#T=np.array(TT[:,:30])
 	print (T.shape)
@@ -136,14 +148,24 @@ def main():
 	print(tp, ' --- ', tn, ' --- ', fp, ' --- ', fn)
 	print(tp1, ' --- ', tn1, ' --- ', fp1, ' --- ', fn1)
 	
-	y_new = dbscan_predict(T2, kdtree, pred)
+	core_indices = dbscan.core_sample_indices_ # Indices of core samples
+	core_samples1 = dbscan.components_ # Copy of core samples
+	core_samples = [T[i] for i in core_indices] # Copy of core samples
+	ttt = core_samples - core_samples1
+	print(ttt)
+	core_labels = [pred[i] for i in core_indices]
+	tttt = Counter(core_labels)
+	print(tttt)
+	print('Preparing KD tree')
+	kdtree = KDTree(core_samples)
+	y_new = dbscan_predict(T2, kdtree, core_labels)
 
 	an = Counter(y_new)
 	print(an)
 	tp = tn = fp = fn =0
 	tp1 = tn1 = fp1 = fn1 =0
 	for i in range(len(T2)):
-		if Y[i]==0:
+		if Y[i+16384]==0:
 			if y_new[i]==0:
 				tp+=1
 				fn1+=1
@@ -161,7 +183,6 @@ def main():
 	print(tp, ' --- ', tn, ' --- ', fp, ' --- ', fn)
 	print(tp1, ' --- ', tn1, ' --- ', fp1, ' --- ', fn1)
 	
-
 main()
 
 

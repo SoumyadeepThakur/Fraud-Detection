@@ -1,6 +1,7 @@
 # Fraud Detection
 
 **Goal**: Detecting fraud from credit card transcations.
+
 **Approach**: From a statistical point of view, fraud detection methods can be broadly classified into supervised and unsupervised
 methods. In supervised approach, detecting fraud is primarily a binary classification problem, where the objective is
 to classify a transaction as legitimate (negative class) or fraudulent (positive class). In unsupervised fraud detection,
